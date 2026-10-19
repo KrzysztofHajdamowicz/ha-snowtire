@@ -16,7 +16,7 @@ IDENT="$NAT|$ALPHANUM"
 FIELD='[0-9A-Za-z-]+'
 
 SEMVER_REGEX="\
-^($NAT)\\.($NAT)\\.($NAT)\
+^v($NAT)\\.($NAT)\\.($NAT)\
 (\\-(${IDENT})(\\.(${IDENT}))*)?\
 (\\+${FIELD}(\\.${FIELD})*)?$"
 
@@ -35,7 +35,7 @@ function validate_version {
             echo "$version"
         fi
     else
-        die "Version $version does not match the SemVer scheme 'X.Y.Z(-PRERELEASE)(+BUILD)'"
+        die "Version $version does not match the scheme 'vX.Y.Z(-PRERELEASE)(+BUILD)'"
     fi
 }
 
@@ -74,10 +74,10 @@ function bump_prerel {
     if test -n "$prev_numeric"; then
         # previous pre-release is already numbered, bump it
         : $(( ++prev_numeric ))
-        echo "$(validate_version "${major}.${minor}.${patch}-${prev_prefix}${prev_numeric}")"
+        echo "$(validate_version "v${major}.${minor}.${patch}-${prev_prefix}${prev_numeric}")"
     else
         # append starting number
-        echo "$(validate_version "${major}.${minor}.${patch}-${prev_prefix}2")"
+        echo "$(validate_version "v${major}.${minor}.${patch}-${prev_prefix}2")"
     fi
 }
 
@@ -102,10 +102,6 @@ if output=$(git status --porcelain) && [[ -n "$output" ]]; then
     log.info ${output}
     exit 2
 fi
-if ! uv run pytest; then
-    exit 3
-fi
-
 const_path=$(find custom_components/ -name const.py)
 version=$(grep "^VERSION: Final =" ${const_path} | sed -E "s/^[^\"]+\"([^\"]*).*$/\\1/")
 
@@ -117,19 +113,23 @@ fi
 
 new=$(validate_version "${1}")
 
+if ! uv run pytest; then
+    exit 3
+fi
+
 log.info "Patch files to version '${new}'..."
 set_version "${const_path}" "${new}"
 ./scripts/update_manifest
 if output=$(git status --porcelain) && [[ -n "$output" ]]; then
     git commit -a --no-verify -m "Bump version to ${new}"
 fi
-git tag -a "v$new" -m "v$new"
-log.info "Commit tagged as v$new"
+git tag -a "$new" -m "$new"
+log.info "Commit tagged as $new"
 
 if echo "${new}" | grep -q "-"; then
     dev=$(bump_prerel "${new}")
 else
-    dev="$(echo "${new}" | awk -F. '/[0-9]+\./{($NF)++;print}' OFS=.)-alpha"
+    dev="$(echo "${new}" | awk -F. '/[0-9]+\./{$NF++;print}' OFS=.)-alpha"
 fi
 
 log.info "Patch files to version '${dev}'..."

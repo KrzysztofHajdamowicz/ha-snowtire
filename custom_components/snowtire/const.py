@@ -6,7 +6,7 @@ from homeassistant.const import Platform
 
 NAME: Final = "Snowtire Sensor"
 DOMAIN: Final = "snowtire"
-VERSION: Final = "2.0.0-pre2"
+VERSION: Final = "v2.0.0-pre2"
 ISSUE_URL: Final = "https://github.com/KrzysztofHajdamowicz/ha-snowtire/issues"
 
 PLATFORMS: Final = [Platform.BINARY_SENSOR]
