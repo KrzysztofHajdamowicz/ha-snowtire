@@ -81,6 +81,16 @@ function bump_prerel {
     fi
 }
 
+function set_version {
+    # Portable (GNU/BSD) in-place replacement of the VERSION constant.
+    python3 - "$1" "$2" <<'PY'
+import re, sys
+from pathlib import Path
+path, version = Path(sys.argv[1]), sys.argv[2]
+path.write_text(re.sub(r'(^VERSION(?:: Final)? = ")[^"]*', rf'\g<1>{version}', path.read_text(), count=1, flags=re.M))
+PY
+}
+
 if output=$(git branch --show-current) \
 && [[ "$output" != "master" && "$output" != "main" && "$output" != "dev" ]]; then
     log.fatal "Please, change HEAD to 'master', 'main' or 'dev' branch."
@@ -92,7 +102,7 @@ if output=$(git status --porcelain) && [[ -n "$output" ]]; then
     log.info ${output}
     exit 2
 fi
-if ! pytest; then
+if ! uv run pytest; then
     exit 3
 fi
 
@@ -108,12 +118,12 @@ fi
 new=$(validate_version "${1}")
 
 log.info "Patch files to version '${new}'..."
-sed -i -E "s/(^VERSION: Final = \")[^\"]*/\\1${new}/" ${const_path}
+set_version "${const_path}" "${new}"
 ./scripts/update_manifest
 if output=$(git status --porcelain) && [[ -n "$output" ]]; then
     git commit -a --no-verify -m "Bump version to ${new}"
 fi
-git tag -a "$new" -m "v$new"
+git tag -a "v$new" -m "v$new"
 log.info "Commit tagged as v$new"
 
 if echo "${new}" | grep -q "-"; then
@@ -123,5 +133,5 @@ else
 fi
 
 log.info "Patch files to version '${dev}'..."
-sed -i -E "s/(^VERSION: Final = \")[^\"]*/\\1${dev}/" ${const_path}
+set_version "${const_path}" "${dev}"
 ./scripts/update_manifest

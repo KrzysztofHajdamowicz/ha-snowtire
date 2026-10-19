@@ -2,11 +2,11 @@
 """Helper script to generate release notes."""
 
 import argparse
+from datetime import datetime
 import logging
 import os
 import re
 import subprocess
-from datetime import datetime
 
 from github import Github, GithubException, Repository, Tag
 from packaging.version import Version

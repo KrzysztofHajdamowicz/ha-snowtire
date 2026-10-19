@@ -7,59 +7,42 @@ Contributing to this project should be as easy and transparent as possible, whet
 - Submitting a fix
 - Proposing new features
 
-## IMPORTANT! Install development environment first
+## Development environment
 
-When making changes in code, please use the existing development environment — this will save you from many errors and help create more convenient code to support. To install the environment, run the `./scripts/setup` script.
+The project uses [uv](https://docs.astral.sh/uv/) to manage Python and the dependencies. Home Assistant is installed as a development dependency, so its source code is available in `.venv` for reference.
 
-## Github is used for everything
+```bash
+./scripts/setup          # creates .venv, installs dependencies and git hooks
+uv run pytest            # runs the tests
+./scripts/lint           # formats and lints the code with ruff
+./scripts/develop        # starts a development Home Assistant on http://localhost:8123
+```
 
-Github is used to host code, to track issues and feature requests, as well as accept pull requests.
+The git hooks (run by [prek](https://prek.j178.dev/), a drop-in replacement for pre-commit) format the code, keep `uv.lock` up to date and sync `manifest.json` with `const.py`.
 
-Pull requests are the best way to propose changes to the codebase.
+A [devcontainer](.devcontainer.json) with everything preinstalled is available for Visual Studio Code.
 
-1. Fork the repo and create your branch from `main`.
-2. If you've changed something, update the documentation.
-3. Make sure your code lints (using black).
-4. Test you contribution.
-5. Issue that pull request!
+## Pull requests
 
-## Any contributions you make will be under the MIT Software License
+1. Fork the repo and create your branch from `dev`.
+2. Follow the current [Home Assistant developer documentation](https://developers.home-assistant.io/) for integrations.
+3. Add or update tests for your change and make sure `uv run pytest` passes.
+4. Make sure `./scripts/lint` reports no issues.
+5. If you've changed behaviour, update the documentation.
+6. Open the pull request against `dev`.
 
-In short, when you submit code changes, your submissions are understood to be under the same [MIT License](http://choosealicense.com/licenses/mit/) that covers the project. Feel free to contact the maintainers if that's a concern.
+## Report bugs using GitHub's [issues](../../issues)
 
-## Report bugs using Github's [issues](../../issues)
+GitHub issues are used to track public bugs. Report a bug by [opening a new issue](../../issues/new/choose).
 
-GitHub issues are used to track public bugs.
-Report a bug by [opening a new issue](../../issues/new/choose); it's that easy!
-
-## Write bug reports with detail, background, and sample code
-
-**Great Bug Reports** tend to have:
+**Great bug reports** tend to have:
 
 - A quick summary and/or background
-- Steps to reproduce
-  - Be specific!
-  - Give sample code if you can.
+- Steps to reproduce (be specific, give sample configuration if you can)
 - What you expected would happen
 - What actually happens
-- Notes (possibly including why you think this might be happening, or stuff you tried that didn't work)
-
-People *love* thorough bug reports. I'm not even kidding.
-
-## Use a Consistent Coding Style
-
-Use [black](https://github.com/ambv/black) to make sure the code follows the style.
-
-## Test your code modification
-
-This custom component is based on [integration blueprint template](https://github.com/Limych/ha-blueprint).
-
-It comes with development environment in a container, easy to launch
-if you use Visual Studio Code. With this container you will have a stand alone
-Home Assistant instance running and already configured with the included
-[`configuration.yaml`](./config/configuration.yaml)
-file.
+- Debug logs (`logger: logs: custom_components.snowtire: debug`) and the diagnostics download of the integration entry
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under its MIT License.
+By contributing, you agree that your contributions will be licensed under the same [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](LICENSE.md) that covers the project.

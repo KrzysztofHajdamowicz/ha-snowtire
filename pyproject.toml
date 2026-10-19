@@ -1,223 +1,99 @@
 [project]
-name = "integration_blueprint"
-requires-python = ">=3.12"
+name = "ha-snowtire"
+version = "0.0.0"
+description = "Home Assistant custom integration: tells you when it is time to change car tires based on the weather forecast."
+readme = "README.md"
+license = "CC-BY-NC-SA-4.0"
+requires-python = ">=3.14.2"
+dependencies = []
 
-[tool.black]
-target-version = ["py312"]
-extend-exclude = "/generated/"
-
-[tool.isort]
-# https://github.com/PyCQA/isort/wiki/isort-Settings
-profile = "black"
-# will group `import x` and `from x import` of the same module.
-force_sort_within_sections = true
-known_first_party = [
-    "homeassistant",
-    "tests",
+[dependency-groups]
+dev = [
+    "homeassistant==2026.10.2",
+    "pytest-homeassistant-custom-component==0.13.373",
+    "pytest-cov>=7.0",
+    "ruff>=0.17",
+    "prek>=0.5",
 ]
-forced_separate = [
-    "tests",
-]
-combine_as_imports = true
-
-[tool.pylint.MAIN]
-py-version = "3.12"
-ignore = [
-    "tests",
-]
-# Use a conservative default here; 2 should speed up most setups and not hurt
-# any too bad. Override on command line as appropriate.
-jobs = 2
-init-hook = """\
-    from pathlib import Path; \
-    import sys; \
-
-    from pylint.config import find_default_config_files; \
-
-    sys.path.append( \
-        str(Path(next(find_default_config_files())).parent.joinpath('pylint/plugins'))
-    ) \
-    """
-load-plugins = [
-    "pylint.extensions.code_style",
-    "pylint.extensions.typing",
-    "hass_enforce_type_hints",
-    "hass_imports",
-    "hass_logger",
-    "pylint_per_file_ignores",
-]
-persistent = false
-extension-pkg-allow-list = [
-    "av.audio.stream",
-    "av.stream",
-    "ciso8601",
-    "orjson",
-    "cv2",
-]
-fail-on = [
-    "I",
+release = [
+    "PyGithub>=2.8",
+    "packaging>=25.0",
 ]
 
-[tool.pylint.BASIC]
-class-const-naming-style = "any"
-good-names = [
-    "_",
-    "ev",
-    "ex",
-    "fp",
-    "i",
-    "id",
-    "j",
-    "k",
-    "Run",
-    "ip",
-]
-
-[tool.pylint."MESSAGES CONTROL"]
-# Reasons disabled:
-# format - handled by black
-# locally-disabled - it spams too much
-# duplicate-code - unavoidable
-# cyclic-import - doesn't test if both import on load
-# abstract-class-little-used - prevents from setting right foundation
-# unused-argument - generic callbacks and setup methods create a lot of warnings
-# too-many-* - are not enforced for the sake of readability
-# too-few-* - same as too-many-*
-# abstract-method - with intro of async there are always methods missing
-# inconsistent-return-statements - doesn't handle raise
-# too-many-ancestors - it's too strict.
-# wrong-import-order - isort guards this
-# consider-using-f-string - str.format sometimes more readable
-# ---
-# Pylint CodeStyle plugin
-# consider-using-namedtuple-or-dataclass - too opinionated
-# consider-using-assignment-expr - decision to use := better left to devs
-disable = [
-    "format",
-    "abstract-method",
-    "cyclic-import",
-    "duplicate-code",
-    "inconsistent-return-statements",
-    "locally-disabled",
-    "not-context-manager",
-    "too-few-public-methods",
-    "too-many-ancestors",
-    "too-many-arguments",
-    "too-many-branches",
-    "too-many-instance-attributes",
-    "too-many-lines",
-    "too-many-locals",
-    "too-many-public-methods",
-    "too-many-return-statements",
-    "too-many-statements",
-    "too-many-boolean-expressions",
-    "unused-argument",
-    "wrong-import-order",
-    "consider-using-f-string",
-    "consider-using-namedtuple-or-dataclass",
-    "consider-using-assignment-expr",
-]
-enable = [
-    #"useless-suppression",  # temporarily every now and then to clean them up
-    "use-symbolic-message-instead",
-]
-
-[tool.pylint.REPORTS]
-score = false
-
-[tool.pylint.TYPECHECK]
-ignored-classes = [
-    "_CountingAttr",  # for attrs
-]
-mixin-class-rgx = ".*[Mm]ix[Ii]n"
-
-[tool.pylint.FORMAT]
-expected-line-ending-format = "LF"
-
-[tool.pylint.EXCEPTIONS]
-overgeneral-exceptions = [
-    "builtins.BaseException",
-    "builtins.Exception",
-    # "homeassistant.exceptions.HomeAssistantError",  # too many issues
-]
-
-[tool.pylint.TYPING]
-runtime-typing = false
-
-[tool.pylint.CODE_STYLE]
-max-line-length-suggestions = 72
-
-[tool.pylint-per-file-ignores]
-# hass-component-root-import: Tests test non-public APIs
-# protected-access: Tests do often test internals a lot
-# redefined-outer-name: Tests reference fixtures in the test function
-"/tests/" = "hass-component-root-import,protected-access,redefined-outer-name"
-
-[tool.pytest.ini_options]
-testpaths = [
-    "tests",
-]
-norecursedirs = [
-    ".git",
-    "testing_config",
-]
-log_format = "%(asctime)s.%(msecs)03d %(levelname)-8s %(threadName)s %(name)s:%(filename)s:%(lineno)s %(message)s"
-log_date_format = "%Y-%m-%d %H:%M:%S"
-asyncio_mode = "auto"
+[tool.uv]
+package = false
+default-groups = ["dev"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py313"
+line-length = 88
 
-select = [
-    "C",       # complexity
-    "D",       # docstrings
-    "E",       # pycodestyle
-    "F",       # pyflakes/autoflake
-    "PGH004",  # Use specific rule codes when using noqa
-    "PLC0414", # Useless import alias. Import alias does not rename original package.
-    "SIM105",  # Use contextlib.suppress({exception}) instead of try-except-pass
-    "SIM117",  # Merge with-statements that use the same scope
-    "SIM300",  # Yoda conditions. Use 'age == 42' instead of '42 == age'.
-    "SIM401",  # Use get from dict with default instead of an if block
-    "T20",     # flake8-print
-    "TRY004",  # Prefer TypeError exception for invalid type
-    "UP",      # pyupgrade
-    "W",       # pycodestyle
-]
-
+[tool.ruff.lint]
+select = ["ALL"]
 ignore = [
-    "D202", # No blank lines allowed after function docstring
-    "D203", # 1 blank line required before class docstring
-    "D213", # Multi-line docstring summary should start at the second line
-    "D404", # First word of the docstring should not be This
-    "D406", # Section name should end with a newline
-    "D407", # Section name underlining
-    "D411", # Missing blank line before section
-    "E501", # line too long
-    "E731", # do not assign a lambda expression, use a def
+    "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
+    "COM812",  # incompatible with formatter
+    "CPY001",  # Missing copyright notice (headers kept where they matter)
+    "D203",    # no-blank-line-before-class (incompatible with formatter)
+    "D212",    # multi-line-summary-first-line (incompatible with formatter)
+    "E501",    # line too long (formatter handles it)
+    "FIX002",  # TODO provide context for future work
+    "ISC001",  # incompatible with formatter
+    "PLR2044", # Line with empty comment
+    "TD002",   # Missing author in TODO
+    "TD003",   # Missing issue link in TODO
 ]
 
-[tool.ruff.flake8-pytest-style]
+[tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false
 
-[tool.ruff.pyupgrade]
+[tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
 
-[tool.ruff.per-file-ignores]
-
-# TODO: these files have functions that are too complex, but flake8's and ruff's
-#       complexity (and/or nested-function) handling differs; trying to add a noqa doesn't work
-#       because the flake8-noqa plugin then disagrees on whether there should be a C901 noqa
-#       on that line.  So, for now, we just ignore C901s on these files as far as ruff is concerned.
-
-"homeassistant/components/light/__init__.py" = ["C901"]
-"homeassistant/components/mqtt/discovery.py" = ["C901"]
-"homeassistant/components/websocket_api/http.py" = ["C901"]
-
-# Allow for main entry & scripts to write to stdout
-"homeassistant/__main__.py" = ["T201"]
-"homeassistant/scripts/*" = ["T201"]
-"script/*" = ["T20"]
-
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 max-complexity = 25
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components", "tests"]
+force-sort-within-sections = true
+combine-as-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = [
+    "ANN001",  # Missing type annotation for function argument
+    "ANN201",  # Missing return type annotation for public function
+    "ARG001",  # Unused function argument (fixtures)
+    "PLR2004", # Magic value used in comparison
+    "S101",    # Use of assert
+    "S311",    # Standard pseudo-random generators
+    "SLF001",  # Private member accessed
+    "TC001",   # Type-checking imports (fixtures need runtime imports)
+    "TC002",   # Type-checking imports (fixtures need runtime imports)
+    "TC003",   # Type-checking imports (fixtures need runtime imports)
+]
+"scripts/*" = [
+    "T201",    # print found
+]
+# Legacy release-notes helper, kept as is.
+"scripts/gen_releasenotes" = ["ANN", "DTZ", "ERA001", "PLR2004", "PTH", "S607", "SLF001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+norecursedirs = [".git", "testing_config"]
+asyncio_mode = "auto"
+markers = ["regression: scenarios identified during the pre-release code review"]
+addopts = "--strict-markers --cov=custom_components --cov-report=term-missing"
+log_format = "%(asctime)s.%(msecs)03d %(levelname)-8s %(threadName)s %(name)s:%(filename)s:%(lineno)s %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+
+[tool.coverage.run]
+source = ["custom_components"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+fail_under = 90

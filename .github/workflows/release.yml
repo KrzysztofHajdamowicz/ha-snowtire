@@ -4,29 +4,25 @@ name: "Release"
 on:
   push:
     tags:
-      - "[v0-9]+.[0-9]+*"
+      - "v[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
   release:
     name: "Publish new release"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: "Checkout the repository"
-        uses: "actions/checkout@v4.1.0"
+        uses: actions/checkout@v7
 
       - working-directory: ./custom_components
         run: |
           echo "package=$(ls -F | grep \/$ | sed -n "s/\///g;1p")" >> $GITHUB_ENV
-          echo "release_version=$(git describe --tags | sed s/v//)" >> $GITHUB_ENV
+          echo "release_version=$(git describe --tags)" >> $GITHUB_ENV
       - working-directory: ./custom_components
         run: |
           echo "basedir=$(pwd)/${{ env.package }}" >> $GITHUB_ENV
-
-      - name: "Setup Git"
-        if: env.release_version != '' && success()
-        run: |
-          git config --global user.name "release"
-          git config --global user.email "release@GitHub"
 
       - name: "Zip component dir"
         if: env.release_version != '' && success()
@@ -36,46 +32,36 @@ jobs:
 
       - name: "Release"
         if: env.release_version != '' && success()
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ env.basedir }}/${{ env.package }}.zip
+          # Tags such as v2.0.0-pre1, v2.0.0-beta.1, v2.1.0-alpha or v2.1.0-rc1
+          # are published as pre-releases (hidden in HACS unless "show beta" is on).
+          prerelease: >-
+            ${{ contains(github.ref_name, '-pre') || contains(github.ref_name, '-beta')
+            || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc') }}
 
   release-notes:
     name: "Compose release notes"
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: "Check out repository"
-        uses: actions/checkout@v4
-
-      - working-directory: ./custom_components
-        run: |
-          echo "release_version=$(git describe --tags | sed s/v//)" >> $GITHUB_ENV
-
-      - name: "Set up Python"
-        if: env.release_version != '' && success()
-        uses: actions/setup-python@v5
+        uses: actions/checkout@v7
         with:
-          python-version-file: 'pyproject.toml'
+          fetch-depth: 0
 
-      - name: "Cache pip"
+      - run: |
+          echo "release_version=$(git describe --tags)" >> $GITHUB_ENV
+
+      - name: "Set up uv"
         if: env.release_version != '' && success()
-        uses: actions/cache@v4
+        uses: astral-sh/setup-uv@v10.3.0
         with:
-          # This path is specific to Ubuntu
-          path: ~/.cache/pip
-          # Look to see if there is a cache hit for the corresponding requirements file
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-            ${{ runner.os }}-
-
-      - name: "Install requirements"
-        if: env.release_version != '' && success()
-        run: |
-          python3 -m pip install setuptools wheel
-          python3 -m pip install -r ./requirements-dev.txt
+          enable-cache: true
 
       - name: "Update release notes"
         if: env.release_version != '' && success()
-        run: python3 ./scripts/gen_releasenotes --token ${{ secrets.GITHUB_TOKEN }} --repo ${{ github.repository }} --release ${{ env.release_version }}
+        run: uv run --only-group release python ./scripts/gen_releasenotes --token ${{ secrets.GITHUB_TOKEN }} --repo ${{ github.repository }} --release ${{ env.release_version }}

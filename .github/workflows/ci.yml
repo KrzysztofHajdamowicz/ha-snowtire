@@ -1,0 +1,124 @@
+---
+name: "CI"
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout the repository"
+        uses: actions/checkout@v7
+
+      - name: "Set up uv"
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: "Install dependencies"
+        run: uv sync --locked
+
+      - name: "Ruff check"
+        run: uv run ruff check .
+
+      - name: "Ruff format"
+        run: uv run ruff format --check .
+
+  test:
+    name: "Test"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout the repository"
+        uses: actions/checkout@v7
+
+      - name: "Set up uv"
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: "Install dependencies"
+        run: uv sync --locked
+
+      - name: "Run tests"
+        run: |
+          uv run pytest --durations=10 -p no:cacheprovider
+          ./scripts/check_dirty
+
+  test-minimum:
+    name: "Test HA 2026.1 / Python 3.13"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout the repository"
+        uses: actions/checkout@v7
+
+      - name: "Set up uv"
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      # The main development lock targets current HA and Python 3.14.
+      # Install the minimum supported HA in a separate Python 3.13 environment.
+      - name: "Install minimum-version test dependencies"
+        run: |
+          uv venv --python 3.13
+          uv pip install homeassistant==2026.1.0 pytest-homeassistant-custom-component==0.13.305 pytest-cov==7.0.0
+
+      - name: "Run tests"
+        run: |
+          .venv/bin/pytest --durations=10 -p no:cacheprovider
+          ./scripts/check_dirty
+
+  hassfest:
+    name: "Hassfest"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout the repository"
+        uses: actions/checkout@v7
+
+      - name: "Run hassfest validation"
+        uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: "HACS"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout the repository"
+        uses: actions/checkout@v7
+
+      - name: "Run HACS validation"
+        uses: hacs/action@main
+        with:
+          category: integration
+          # brands: no brand images in home-assistant/brands for this fork.
+          # license: CC BY-NC-SA 4.0 is not detected by GitHub (SPDX NOASSERTION).
+          ignore: "brands license"
+
+  automerge:
+    name: "Auto-merge Dependabot"
+    needs: [lint, test, test-minimum, hassfest, hacs]
+    if: github.event_name == 'pull_request' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: "Fetch Dependabot metadata"
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Merge minor and patch updates"
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --squash --delete-branch "$PR_URL"
