@@ -1,32 +1,41 @@
 {
   "title": "Snowtire",
   "config": {
-    "abort": {
-      "no_mixed_config": "Już skonfigurowano. Konfiguracja przez configuration.yaml nie jest kompatybilna z konfiguracją przez interfejs użytkownika."
-    },
     "step": {
       "user": {
+        "title": "Dodaj czujnik Snowtire",
         "data": {
           "name": "Nazwa obszaru",
-          "weather": "Entity z prognozą pogody",
-          "days": "Na ile dni w przód analizować pogodę",
-          "create_notifications": "Stwórz powiadomienia"
+          "weather": "Encja z prognozą pogody dla obszaru",
+          "days": "Na ile dni w przód analizować prognozę",
+          "create_notifications": "Twórz powiadomienia"
+        },
+        "data_description": {
+          "name": "Używana w nazwie czujnika i w powiadomieniach.",
+          "weather": "Czujnik nie widzi dalej niż sięga prognoza tego dostawcy pogody.",
+          "days": "Na ile dni w przód analizowana jest prognoza.",
+          "create_notifications": "Twórz trwałe powiadomienie, gdy nadejdzie czas zmiany opon."
         }
       }
+    },
+    "abort": {
+      "already_configured": "Czujnik dla tego obszaru i encji pogody jest już skonfigurowany."
     }
   },
   "options": {
-    "abort": {
-      "no_options_available": "Konfiguracja utworzona przez configuration.yaml nie może być zmieniona przez interfejs użytkownika."
-    },
     "step": {
-      "user": {
+      "init": {
+        "title": "Opcje dla {name}",
         "data": {
-          "weather": "Entity z prognozą pogody",
-          "days": "Na ile dni w przód analizować pogodę",
-          "create_notifications": "Stwórz powiadomienia"
+          "weather": "Encja z prognozą pogody dla obszaru",
+          "days": "Na ile dni w przód analizować prognozę",
+          "create_notifications": "Twórz powiadomienia"
         },
-        "title": "Opcje dla {name}"
+        "data_description": {
+          "weather": "Czujnik nie widzi dalej niż sięga prognoza tego dostawcy pogody.",
+          "days": "Na ile dni w przód analizowana jest prognoza.",
+          "create_notifications": "Twórz trwałe powiadomienie, gdy nadejdzie czas zmiany opon."
+        }
       }
     }
   },
@@ -39,11 +48,17 @@
           "on": "Zimowe"
         }
       }
+    },
+    "notification": {
+      "title": {
+        "name": "Zmień opony dla {name}"
+      },
+      "to_summer": {
+        "name": "Dla obszaru {name} nadszedł czas na zmianę opon na letnie."
+      },
+      "to_winter": {
+        "name": "Dla obszaru {name} nadszedł czas na zmianę opon na zimowe."
+      }
     }
-  },
-  "notifications": {
-    "title": "Zmień opony dla {name}",
-    "to_summer": "Dla obszaru {name} nadszedł czas na zmianę opon na letnie.",
-    "to_winter": "Dla obszaru {name} nadszedł czas na zmianę opon na zimowe."
   }
 }

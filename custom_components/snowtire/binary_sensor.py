@@ -1,21 +1,16 @@
-"""
-The Snowtire binary sensor.
-
-For more details about this platform, please refer to the documentation at
-https://github.com/Limych/ha-snowtire/
-"""
+"""Binary sensor platform for the Snowtire integration."""
 
 #  Copyright (c) 2020-2024, Andrey "Limych" Khrolenok <andrey@khrolenok.ru>
+#  Copyright (c) 2026, Krzysztof Hajdamowicz
 #  Creative Commons BY-NC-SA 4.0 International Public License
 #  (see LICENSE.md or https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
-import logging
-from collections.abc import Mapping
-from contextlib import suppress
-from datetime import datetime
-from typing import Final
+from __future__ import annotations
 
-import voluptuous as vol
+from datetime import UTC, date, datetime, timedelta
+import logging
+from typing import TYPE_CHECKING, Any, Final
+
 from homeassistant.components import persistent_notification
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.components.weather import (
@@ -23,36 +18,30 @@ from homeassistant.components.weather import (
     ATTR_FORECAST_TEMP_LOW,
     ATTR_FORECAST_TIME,
     ATTR_WEATHER_TEMPERATURE,
+    ATTR_WEATHER_TEMPERATURE_UNIT,
+    DOMAIN as WEATHER_DOMAIN,
     SERVICE_GET_FORECASTS,
     WeatherEntityFeature,
 )
-from homeassistant.components.weather import (
-    DOMAIN as WEATHER_DOMAIN,
-)
-from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import (
     ATTR_SUPPORTED_FEATURES,
     CONF_ENTITY_ID,
     CONF_NAME,
-    CONF_PLATFORM,
     CONF_TYPE,
-    CONF_UNIQUE_ID,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
     UnitOfTemperature,
 )
-from homeassistant.core import Event, HomeAssistant, async_get_hass, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import translation
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue
-from homeassistant.helpers.translation import (
-    async_get_cached_translations,
-)
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import TemperatureConverter
 
-from . import SNOWTIRE_SCHEMA
 from .const import (
     CONF_CREATE_NOTIFICATIONS,
     CONF_DAYS,
@@ -60,276 +49,254 @@ from .const import (
     DEFAULT_CREATE_NOTIFICATIONS,
     DEFAULT_DAYS,
     DOMAIN,
-    DOMAIN_YAML,
-    ICON_SUMMER,
-    ICON_WINTER,
-    STARTUP_MESSAGE,
+    TEMP_CHANGE,
+    TEMP_ERROR,
+    TEMP_FREEZE,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
+    from homeassistant.core import Event, EventStateChangedData
+    from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+    from . import SnowtireConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
-
-def _deprecated_platform(value: str) -> str:
-    """Validate if platform is deprecated."""
-    if value == DOMAIN:
-        _LOGGER.warning(
-            "The 'snowtire' platform for binary sensor configuration is deprecated. "
-            "Please update your YAML-configs or use the UI."
-        )
-        hass = async_get_hass()
-        async_create_issue(
-            hass,
-            DOMAIN,
-            "deprecated_platform_config",
-            is_fixable=False,
-            severity=IssueSeverity.WARNING,
-            translation_key="deprecated_platform_config",
-        )
-    return value
-
-
-PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend(SNOWTIRE_SCHEMA.schema).extend(
-    {
-        vol.Required(CONF_PLATFORM): vol.All(cv.string, _deprecated_platform),
-    }
+# Forecast types in order of preference.
+FORECAST_TYPES: Final = (
+    (WeatherEntityFeature.FORECAST_DAILY, "daily"),
+    (WeatherEntityFeature.FORECAST_TWICE_DAILY, "twice_daily"),
+    (WeatherEntityFeature.FORECAST_HOURLY, "hourly"),
 )
 
-TEMP_CHANGE: Final = 7
-TEMP_ERROR: Final = 0.5
 
-
-def _translate_notification(
-    hass: HomeAssistant,
-    translation_key: str,
-    translation_placeholders: Mapping[str, str] | None = None,
-) -> str:
-    """Return a translated notification message."""
-    translations = async_get_cached_translations(
-        hass, hass.config.language, "entity", DOMAIN
-    )
-    localize_key = f"component.{DOMAIN}.entity.notification.snowtire.{translation_key}"
-    if localize_key in translations:
-        message = translations[localize_key]
-        if translation_placeholders:
-            with suppress(KeyError):
-                message = message.format(**translation_placeholders)
-        return message
-
-    # We return the translation key when was not found in the cache
-    return translation_key
-
-
-# pylint: disable=unused-argument
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType = None,  # noqa: ARG001
-) -> None:
-    """Set up the Snowtire sensor."""
-    if DOMAIN not in hass.data:
-        _LOGGER.info(STARTUP_MESSAGE)
-        hass.data.setdefault(DOMAIN, {})
-
-    async_add_entities([SnowtireBinarySensor(hass, config)])
-
-
-# pylint: disable=unused-argument
 async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    hass: HomeAssistant,  # noqa: ARG001
+    entry: SnowtireConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the Snowtire binary sensor."""
-    entities = []
-    if config_entry.source == SOURCE_IMPORT:
-        # Setup from configuration.yaml
-        for key, cfg in enumerate(hass.data[DOMAIN_YAML]):
-            config = {CONF_UNIQUE_ID: f"{config_entry.entry_id}-{key}"}
-            config.update(cfg)
-            entities.extend([SnowtireBinarySensor(hass, config)])
+    """Set up the Snowtire binary sensor from a config entry."""
+    async_add_entities([SnowtireBinarySensor(entry)])
 
+
+def calculate_winter(
+    temperatures: Iterable[float], *, previous: bool | None
+) -> bool | None:
+    """
+    Decide whether winter tires are needed.
+
+    Winter tires are needed when any temperature is at or below the freezing
+    threshold, or when the average temperature is below the change threshold.
+    The change threshold has a hysteresis depending on the previous decision.
+    Returns None when there is no data to decide on.
+    """
+    temps = list(temperatures)
+    if not temps:
+        return None
+    if min(temps) <= TEMP_FREEZE:
+        return True
+
+    if previous is None:
+        threshold = TEMP_CHANGE
+    elif previous:
+        threshold = TEMP_CHANGE + TEMP_ERROR
     else:
-        # Setup from config entry
-        config = config_entry.data.copy()  # type: ConfigType
-        config.update(config_entry.options)
-        config.update({CONF_UNIQUE_ID: config_entry.entry_id})
-
-        entities.extend([SnowtireBinarySensor(hass, config)])
-
-    async_add_entities(entities)
+        threshold = TEMP_CHANGE - TEMP_ERROR
+    return sum(temps) / len(temps) < threshold
 
 
-class SnowtireBinarySensor(BinarySensorEntity):
-    """Implementation of an Snowtire binary sensor."""
+def forecast_date(value: Any) -> date | None:
+    """Return the local date of a forecast entry timestamp."""
+    if isinstance(value, datetime):
+        timestamp = value
+    elif isinstance(value, int | float):
+        timestamp = datetime.fromtimestamp(value / 1000, tz=UTC)
+    elif isinstance(value, str):
+        if (timestamp := dt_util.parse_datetime(value)) is None:
+            return None
+    else:
+        return None
+    return dt_util.as_local(timestamp).date()
+
+
+class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
+    """Binary sensor telling whether winter tires are needed."""
 
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_translation_key = "snowtire"
+    _attr_available = False
 
-    def __init__(self, hass: HomeAssistant, config: ConfigType) -> None:
+    def __init__(self, entry: SnowtireConfigEntry) -> None:
         """Initialize the sensor."""
-        self.hass = hass
-
-        self._weather_entity = config.get(CONF_WEATHER)
-        self._days = config.get(CONF_DAYS, DEFAULT_DAYS)
-        self._is_notify = config.get(
+        self._entry = entry
+        self._weather_entity_id: str = entry.options[CONF_WEATHER]
+        self._days: int = entry.options.get(CONF_DAYS, DEFAULT_DAYS)
+        self._notify: bool = entry.options.get(
             CONF_CREATE_NOTIFICATIONS, DEFAULT_CREATE_NOTIFICATIONS
         )
+        self._problem_reported = False
 
-        unique_id = config.get(CONF_UNIQUE_ID)
-        self._attr_unique_id = (
-            f"{self._weather_entity}-{self._days}"
-            if unique_id == "__legacy__"
-            else unique_id
-        )
-
+        self._attr_unique_id = entry.entry_id
         self._attr_translation_placeholders = {
-            "name": config.get(CONF_NAME, self.hass.config.location_name)
+            "name": entry.data.get(CONF_NAME, entry.title)
         }
 
     async def async_added_to_hass(self) -> None:
-        """Register callbacks."""
+        """Restore the previous decision and subscribe to weather updates."""
+        await super().async_added_to_hass()
 
-        @callback
-        # pylint: disable=unused-argument
-        def update_callback(event: Event) -> None:  # noqa: ARG001
-            """Schedule a state update."""
-            self.async_schedule_update_ha_state(force_refresh=True)
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in (
+            STATE_UNKNOWN,
+            STATE_UNAVAILABLE,
+        ):
+            self._attr_is_on = last_state.state == STATE_ON
 
-        async_track_state_change_event(
-            self.hass, [self._weather_entity], update_callback
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self._weather_entity_id], self._async_weather_changed
+            )
         )
+        self.async_on_remove(async_at_started(self.hass, self._async_started))
 
+    @callback
+    def _async_started(self, _hass: HomeAssistant) -> None:
+        """Schedule the first update once Home Assistant has started."""
         self.async_schedule_update_ha_state(force_refresh=True)
 
-    @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        return self._attr_is_on is not None
-
-    @property
-    def icon(self) -> str | None:
-        """Return the icon to use in the frontend, if any."""
-        return ICON_SUMMER if self.is_on is False else ICON_WINTER
-
-    @staticmethod
-    def _temp2c(
-        temperature: float | None, temperature_unit: str | None
-    ) -> float | None:
-        """Convert weather temperature to Celsius degree."""
-        if temperature is not None and temperature_unit != UnitOfTemperature.CELSIUS:
-            temperature = TemperatureConverter.convert(
-                temperature, temperature_unit, UnitOfTemperature.CELSIUS
-            )
-
-        return temperature
+    @callback
+    def _async_weather_changed(self, _event: Event[EventStateChangedData]) -> None:
+        """Schedule an update when the weather entity changes."""
+        self.async_schedule_update_ha_state(force_refresh=True)
 
     async def async_update(self) -> None:
-        """Update the sensor state."""
-        last_state = self._attr_is_on
+        """Update the sensor state from the weather forecast."""
+        previous = self._attr_is_on
+        temperatures = await self._async_get_temperatures()
+        state = (
+            calculate_winter(temperatures, previous=previous) if temperatures else None
+        )
+        if state is None:
+            self._attr_available = False
+            return
 
-        await self._async_update()
+        self._attr_available = True
+        self._attr_is_on = state
+        if self._notify and previous is not None and state != previous:
+            await self._async_notify(winter=state)
 
-        if (
-            self._is_notify
-            and (last_state is not None)
-            and (self._attr_is_on != last_state)
-        ):
-            _LOGGER.debug("Posting persistent notification to change tires.")
-            persistent_notification.async_create(
-                self.hass,
-                _translate_notification(
-                    self.hass,
-                    "state.to_winter" if self._attr_is_on else "state.to_summer",
-                    self._attr_translation_placeholders,
-                ),
-                title=_translate_notification(
-                    self.hass, "name", self._attr_translation_placeholders
-                ),
+    async def _async_get_temperatures(self) -> list[float]:
+        """Return current and forecast temperatures (Celsius) for the analyzed days."""
+        weather = self.hass.states.get(self._weather_entity_id)
+        if weather is None or weather.state == STATE_UNAVAILABLE:
+            _LOGGER.debug("Weather entity %s is not available", self._weather_entity_id)
+            return []
+
+        forecast_type = self._forecast_type(weather.attributes)
+        if forecast_type is None:
+            self._report_problem(
+                "Weather entity %s does not provide any forecast",
+                self._weather_entity_id,
             )
-
-    async def _async_update(self) -> None:  # noqa: PLR0912
-        """Update the sensor state."""
-        wstate = self.hass.states.get(self._weather_entity)
-        if wstate is None:
-            msg = f"Unable to find an entity called {self._weather_entity}"
-            raise HomeAssistantError(msg)
-
-        tmpu = self.hass.config.units.temperature_unit
-        temp = wstate.attributes.get(ATTR_WEATHER_TEMPERATURE)
-
-        wfeatures = wstate.attributes.get(ATTR_SUPPORTED_FEATURES) or 0
-        if (wfeatures & WeatherEntityFeature.FORECAST_DAILY) != 0:
-            forecast_type = "daily"
-        elif (wfeatures & WeatherEntityFeature.FORECAST_TWICE_DAILY) != 0:
-            forecast_type = "twice_daily"
-        elif (wfeatures & WeatherEntityFeature.FORECAST_HOURLY) != 0:
-            forecast_type = "hourly"
-        else:
-            msg = "Weather entity doesn't support any forecast"
-            raise HomeAssistantError(msg)
+            return []
 
         try:
-            forecast = await self.hass.services.async_call(
+            response = await self.hass.services.async_call(
                 WEATHER_DOMAIN,
                 SERVICE_GET_FORECASTS,
-                {
-                    CONF_TYPE: forecast_type,
-                    CONF_ENTITY_ID: self._weather_entity,
-                },
+                {CONF_TYPE: forecast_type, CONF_ENTITY_ID: self._weather_entity_id},
                 blocking=True,
                 return_response=True,
             )
-        except HomeAssistantError as ex:
-            msg = "Can't get forecast data! Are you sure it's the weather provider?"
-            raise HomeAssistantError(msg) from ex
+        except HomeAssistantError as err:
+            self._report_problem(
+                "Unable to get forecast from %s: %s", self._weather_entity_id, err
+            )
+            return []
+        self._problem_reported = False
 
-        _LOGGER.debug("Current temperature %.1f°C", temp)
-
-        today = dt_util.start_of_local_day()
-        cur_date = today.strftime("%F")
-        stop_date = datetime.fromtimestamp(
-            today.timestamp() + 86400 * (self._days + 1),
-            tz=dt_util.DEFAULT_TIME_ZONE,
-        ).strftime("%F")
-
-        _LOGGER.debug("Inspect weather forecast from %s till %s", cur_date, stop_date)
-        temp = [self._temp2c(temp, tmpu)]
-        for fcast in forecast[self._weather_entity]["forecast"]:
-            fc_date = fcast.get(ATTR_FORECAST_TIME)
-            if isinstance(fc_date, int):
-                fc_date = dt_util.as_local(
-                    datetime.fromtimestamp(fc_date / 1000, dt_util.UTC)
-                ).strftime("%F")
-            elif isinstance(fc_date, datetime):
-                fc_date = dt_util.as_local(fc_date).strftime("%F")
-            if fc_date < cur_date:
-                continue
-            if fc_date == stop_date:
-                break
-
-            tmin = fcast.get(ATTR_FORECAST_TEMP_LOW)
-            tmax = fcast.get(ATTR_FORECAST_TEMP)
-
-            if tmin is not None and fc_date != cur_date:
-                temp.append(self._temp2c(tmin, tmpu))
-            if tmax is not None:
-                temp.append(self._temp2c(tmax, tmpu))
-
-        _LOGGER.debug("Temperature vector: %s", temp)
-        for i in temp:
-            if i <= 0.5:  # noqa: PLR2004
-                _LOGGER.debug("Too cold temperature detected!")
-                self._attr_is_on = True
-                return
-
-        temp = sum(temp) / len(temp)
-        _LOGGER.debug("Average temperature: %.1f°C", temp)
-        self._attr_is_on = temp < (
-            TEMP_CHANGE
-            if self._attr_is_on is None
-            else TEMP_CHANGE + TEMP_ERROR
-            if self._attr_is_on is True
-            else TEMP_CHANGE - TEMP_ERROR
+        forecast = (response or {}).get(self._weather_entity_id, {}).get("forecast", [])
+        unit = (
+            weather.attributes.get(ATTR_WEATHER_TEMPERATURE_UNIT)
+            or self.hass.config.units.temperature_unit
         )
+        today = dt_util.now().date()
+        stop = today + timedelta(days=self._days + 1)
+
+        temperatures: list[float] = []
+        if (current := weather.attributes.get(ATTR_WEATHER_TEMPERATURE)) is not None:
+            temperatures.append(_to_celsius(current, unit))
+        for item in forecast:
+            day = forecast_date(item.get(ATTR_FORECAST_TIME))
+            if day is None or day < today or day >= stop:
+                continue
+            low = item.get(ATTR_FORECAST_TEMP_LOW)
+            if low is not None and day != today:
+                temperatures.append(_to_celsius(low, unit))
+            high = item.get(ATTR_FORECAST_TEMP)
+            if high is not None:
+                temperatures.append(_to_celsius(high, unit))
+
+        _LOGGER.debug(
+            "Temperatures for %s from %s to %s: %s",
+            self._weather_entity_id,
+            today,
+            stop - timedelta(days=1),
+            temperatures,
+        )
+        return temperatures
+
+    @staticmethod
+    def _forecast_type(attributes: Mapping[str, Any]) -> str | None:
+        """Return the best forecast type supported by the weather entity."""
+        try:
+            features = int(attributes.get(ATTR_SUPPORTED_FEATURES) or 0)
+        except TypeError, ValueError:
+            return None
+        return next(
+            (name for feature, name in FORECAST_TYPES if features & feature), None
+        )
+
+    def _report_problem(self, message: str, *args: Any) -> None:
+        """Log a problem once until the next successful update."""
+        if not self._problem_reported:
+            _LOGGER.warning(message, *args)
+            self._problem_reported = True
+        else:
+            _LOGGER.debug(message, *args)
+
+    async def _async_notify(self, *, winter: bool) -> None:
+        """Create a persistent notification about the tire change."""
+        translations = await translation.async_get_translations(
+            self.hass, self.hass.config.language, "entity", {DOMAIN}
+        )
+        placeholders = self._attr_translation_placeholders or {}
+
+        def _text(key: str) -> str:
+            text = translations.get(
+                f"component.{DOMAIN}.entity.notification.{key}.name", key
+            )
+            try:
+                return text.format(**placeholders)
+            except KeyError, IndexError:
+                return text
+
+        _LOGGER.debug("Creating notification to change tires (winter=%s)", winter)
+        persistent_notification.async_create(
+            self.hass,
+            _text("to_winter" if winter else "to_summer"),
+            title=_text("title"),
+            notification_id=f"{DOMAIN}_{self._entry.entry_id}",
+        )
+
+
+def _to_celsius(temperature: float, unit: str) -> float:
+    """Convert a temperature to Celsius."""
+    if unit == UnitOfTemperature.CELSIUS:
+        return float(temperature)
+    return TemperatureConverter.convert(
+        float(temperature), unit, UnitOfTemperature.CELSIUS
+    )

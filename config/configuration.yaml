@@ -17,8 +17,3 @@ logger:
 demo:
 snowtire:
   - weather: weather.demo_weather_south
-#binary_sensor:
-#  - platform: snowtire
-#    weather: weather.demo_weather_south
-#  - platform: snowtire
-#    weather: weather.demo_weather_north

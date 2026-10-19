@@ -1,44 +1,33 @@
-"""
-The Snowtire binary sensor.
-
-For more details about this platform, please refer to the documentation at
-https://github.com/Limych/ha-snowtire/
-"""
+"""Constants for the Snowtire integration."""
 
 from typing import Final
 
 from homeassistant.const import Platform
 
-# Base component constants
 NAME: Final = "Snowtire Sensor"
 DOMAIN: Final = "snowtire"
 VERSION: Final = "1.6.0"
-ISSUE_URL: Final = "https://github.com/Limych/ha-snowtire/issues"
-#
-DOMAIN_YAML: Final = f"_yaml_{DOMAIN}"
+ISSUE_URL: Final = "https://github.com/KrzysztofHajdamowicz/ha-snowtire/issues"
 
-STARTUP_MESSAGE: Final = f"""
--------------------------------------------------------------------
-{NAME}
-Version: {VERSION}
-This is a custom integration!
-If you have ANY issues with this you need to open an issue here:
-{ISSUE_URL}
--------------------------------------------------------------------
-"""
-
-# Platforms
 PLATFORMS: Final = [Platform.BINARY_SENSOR]
-
-# Icons
-ICON_WINTER: Final = "mdi:snowflake"
-ICON_SUMMER: Final = "mdi:white-balance-sunny"
 
 # Configuration and options
 CONF_WEATHER: Final = "weather"
 CONF_DAYS: Final = "days"
 CONF_CREATE_NOTIFICATIONS: Final = "create_notifications"
 
-# Defaults
 DEFAULT_DAYS: Final = 7
+MIN_DAYS: Final = 1
+MAX_DAYS: Final = 30
 DEFAULT_CREATE_NOTIFICATIONS: Final = True
+
+# Decision thresholds (degrees Celsius)
+TEMP_FREEZE: Final = 0.5
+"""Any forecast temperature at or below this value means winter tires."""
+TEMP_CHANGE: Final = 7.0
+"""Average temperature below this value means winter tires."""
+TEMP_ERROR: Final = 0.5
+"""Hysteresis around TEMP_CHANGE to avoid flapping."""
+
+BREAKS_IN_HA_VERSION: Final = "2027.1.0"
+"""Home Assistant version in which YAML configuration support will be removed."""

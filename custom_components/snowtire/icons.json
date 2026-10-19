@@ -1,0 +1,12 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "snowtire": {
+        "default": "mdi:snowflake",
+        "state": {
+          "off": "mdi:white-balance-sunny"
+        }
+      }
+    }
+  }
+}

@@ -1,310 +1,384 @@
-"""The test for the snowtire binary sensor platform."""
+"""Tests for the Snowtire binary sensor."""
 
-# pylint: disable=redefined-outer-name
-from typing import Final
-from unittest.mock import MagicMock, patch
+from datetime import timedelta
+import logging
+from typing import Any
+from unittest.mock import MagicMock
 
-import pytest
 from homeassistant.components.weather import (
     ATTR_FORECAST_TEMP,
     ATTR_FORECAST_TEMP_LOW,
     ATTR_FORECAST_TIME,
-    ATTR_WEATHER_TEMPERATURE,
+    DOMAIN as WEATHER_DOMAIN,
     SERVICE_GET_FORECASTS,
     WeatherEntityFeature,
 )
-from homeassistant.components.weather import (
-    DOMAIN as WEATHER_DOMAIN,
-)
 from homeassistant.const import (
-    ATTR_SUPPORTED_FEATURES,
-    CONF_NAME,
-    CONF_PLATFORM,
     CONF_TYPE,
-    CONF_UNIQUE_ID,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant, ServiceRegistry, SupportsResponse
+from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_mock_service
-
-from custom_components.snowtire.binary_sensor import (
-    SnowtireBinarySensor,
-    async_setup_platform,
-)
-from custom_components.snowtire.const import (
-    CONF_CREATE_NOTIFICATIONS,
-    CONF_DAYS,
-    CONF_WEATHER,
-    DOMAIN,
-    ICON_SUMMER,
-    ICON_WINTER,
+import pytest
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_mock_service,
+    mock_restore_cache,
 )
 
-MOCK_UNIQUE_ID: Final = "test_id"
-MOCK_NAME: Final = "test_name"
-MOCK_WEATHER_ENTITY: Final = "weather.test"
-MOCK_DAYS: Final = 1
+from custom_components.snowtire.const import CONF_CREATE_NOTIFICATIONS
+
+from .conftest import (
+    SENSOR_ENTITY_ID,
+    mock_forecast_service,
+    set_weather_state,
+    setup_entry,
+)
 
 
-@pytest.fixture(name="config")
-def config_fixture(hass: HomeAssistant) -> ConfigType:
-    """Return default config for tests."""
+def forecast_entry(
+    days_ahead: int, high: float | None, low: float | None = None
+) -> dict[str, Any]:
+    """Return a forecast entry as returned by the weather service."""
     return {
-        CONF_UNIQUE_ID: MOCK_UNIQUE_ID,
-        CONF_NAME: MOCK_NAME,
-        CONF_WEATHER: MOCK_WEATHER_ENTITY,
-        CONF_DAYS: MOCK_DAYS,
-        CONF_CREATE_NOTIFICATIONS: True,
+        ATTR_FORECAST_TIME: (dt_util.now() + timedelta(days=days_ahead)).isoformat(),
+        ATTR_FORECAST_TEMP: high,
+        ATTR_FORECAST_TEMP_LOW: low,
     }
 
 
-@pytest.fixture(name="default_sensor")
-def default_sensor_fixture(hass: HomeAssistant, config):
-    """Create an AverageSensor with default values."""
-    return SnowtireBinarySensor(hass, config)
+async def test_winter_and_summer(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_notification: MagicMock,
+) -> None:
+    """Test the sensor state follows the forecast and notifies on changes."""
+    await setup_entry(hass, mock_config_entry)
+
+    # Weather entity does not exist yet: unavailable, no exception.
+    state = hass.states.get(SENSOR_ENTITY_ID)
+    assert state is not None
+    assert state.state == STATE_UNAVAILABLE
+
+    calls = mock_forecast_service(
+        hass, [forecast_entry(0, 12), forecast_entry(1, 11, 8)]
+    )
+    set_weather_state(hass, temperature=10)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(SENSOR_ENTITY_ID)
+    assert state.state == STATE_OFF
+    assert calls[-1].data[CONF_TYPE] == "daily"
+    # The first decision never creates a notification.
+    mock_notification.assert_not_called()
+
+    mock_forecast_service(hass, [forecast_entry(0, 5), forecast_entry(1, 4, -2)])
+    set_weather_state(hass, temperature=3)
+    await hass.async_block_till_done()
+
+    state = hass.states.get(SENSOR_ENTITY_ID)
+    assert state.state == STATE_ON
+    mock_notification.assert_called_once_with(
+        hass,
+        "For area Test area it's time to change car tires to winter ones.",
+        title="Change tires for Test area",
+        notification_id="snowtire_test_entry",
+    )
+
+    # Same decision again: no new notification.
+    set_weather_state(hass, temperature=2)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
+    assert mock_notification.call_count == 1
+
+    mock_forecast_service(hass, [forecast_entry(0, 15), forecast_entry(1, 14, 9)])
+    set_weather_state(hass, temperature=12)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+    assert mock_notification.call_count == 2
+    assert (
+        mock_notification.call_args.args[1]
+        == "For area Test area it's time to change car tires to summer ones."
+    )
 
 
-async def test_setup_platform(hass: HomeAssistant, caplog):
-    """Test platform setup."""
-    async_add_entities = MagicMock()
+async def test_notifications_disabled(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_notification: MagicMock,
+) -> None:
+    """Test no notification is created when disabled in the options."""
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={**mock_config_entry.options, CONF_CREATE_NOTIFICATIONS: False},
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    mock_forecast_service(hass, [forecast_entry(0, 12)])
+    set_weather_state(hass, temperature=10)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+
+    mock_forecast_service(hass, [forecast_entry(0, -3)])
+    set_weather_state(hass, temperature=-1)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
+    mock_notification.assert_not_called()
+
+
+async def test_days_window(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test only the configured number of forecast days is analyzed."""
+    await setup_entry(hass, mock_config_entry)
+
+    # Freezing temperatures in the past and beyond the window are ignored.
+    mock_forecast_service(
+        hass,
+        [
+            forecast_entry(-1, -10, -15),
+            forecast_entry(0, 12),
+            forecast_entry(1, 11, 8),
+            forecast_entry(2, 10, 7),
+            forecast_entry(3, -5, -10),
+            {ATTR_FORECAST_TIME: None, ATTR_FORECAST_TEMP: -20},
+        ],
+    )
+    set_weather_state(hass, temperature=10)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+
+    # The last day of the window counts.
+    mock_forecast_service(
+        hass,
+        [forecast_entry(0, 12), forecast_entry(1, 11, 8), forecast_entry(2, 10, -1)],
+    )
+    set_weather_state(hass, temperature=11)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
+
+
+async def test_todays_low_is_ignored(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test the low temperature of today is ignored, but tomorrow's counts."""
+    await setup_entry(hass, mock_config_entry)
+
+    mock_forecast_service(hass, [forecast_entry(0, 12, -5)])
+    set_weather_state(hass, temperature=10)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+
+    mock_forecast_service(hass, [forecast_entry(1, 12, -5)])
+    set_weather_state(hass, temperature=11)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
+
+
+async def test_fahrenheit(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test temperatures are converted from the unit of the weather entity."""
+    await setup_entry(hass, mock_config_entry)
+
+    mock_forecast_service(hass, [forecast_entry(0, 55), forecast_entry(1, 54, 50)])
+    set_weather_state(hass, temperature=50, unit=UnitOfTemperature.FAHRENHEIT)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+
+    mock_forecast_service(hass, [forecast_entry(0, 40), forecast_entry(1, 38, 30)])
+    set_weather_state(hass, temperature=35, unit=UnitOfTemperature.FAHRENHEIT)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
+
+
+async def test_missing_temperatures(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test missing current or forecast temperatures do not break the sensor."""
+    await setup_entry(hass, mock_config_entry)
+
+    mock_forecast_service(hass, [forecast_entry(0, None), forecast_entry(1, 12)])
+    set_weather_state(hass, temperature=None)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+
+    # No temperatures at all: nothing to decide on.
+    mock_forecast_service(hass, [forecast_entry(0, None)])
+    set_weather_state(hass, temperature=None, state="cloudy")
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("features", "expected_type"),
+    [
+        (
+            WeatherEntityFeature.FORECAST_DAILY
+            | WeatherEntityFeature.FORECAST_TWICE_DAILY
+            | WeatherEntityFeature.FORECAST_HOURLY,
+            "daily",
+        ),
+        (
+            WeatherEntityFeature.FORECAST_TWICE_DAILY
+            | WeatherEntityFeature.FORECAST_HOURLY,
+            "twice_daily",
+        ),
+        (WeatherEntityFeature.FORECAST_HOURLY, "hourly"),
+    ],
+)
+async def test_forecast_type(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    features: int,
+    expected_type: str,
+) -> None:
+    """Test the preferred forecast type is requested."""
+    await setup_entry(hass, mock_config_entry)
+    calls = mock_forecast_service(hass, [forecast_entry(0, 12)])
+
+    set_weather_state(hass, features=features)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+    assert calls[-1].data[CONF_TYPE] == expected_type
+
+
+@pytest.mark.parametrize("features", [0, "unexpected"])
+async def test_no_forecast_support(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+    features: int | str,
+) -> None:
+    """Test a weather entity without forecast support makes the sensor unavailable."""
+    await setup_entry(hass, mock_config_entry)
+    calls = mock_forecast_service(hass, [forecast_entry(0, 12)])
 
     caplog.clear()
-    config = {
-        CONF_PLATFORM: DOMAIN,
-        CONF_WEATHER: MOCK_WEATHER_ENTITY,
-    }
-    await async_setup_platform(hass, config, async_add_entities, None)
+    with caplog.at_level(logging.WARNING):
+        set_weather_state(hass, features=features)
+        await hass.async_block_till_done()
+        set_weather_state(hass, temperature=11, features=features)
+        await hass.async_block_till_done()
 
-    assert async_add_entities.called
-    assert len(caplog.records) == 1
-    assert caplog.records[0].levelname == "INFO"
-
-
-async def test_sensor_initialization(hass: HomeAssistant, default_sensor, config):
-    """Test sensor initialization."""
-    assert default_sensor.unique_id == MOCK_UNIQUE_ID
-    assert default_sensor.device_class is None
-    assert default_sensor.should_poll is False
-    assert default_sensor.is_on is None
-    assert default_sensor.icon == ICON_WINTER
-    assert default_sensor.available is False
-
-    config[CONF_UNIQUE_ID] = None
-    entity = SnowtireBinarySensor(hass, config)
-    assert entity.unique_id is None
-
-    config[CONF_UNIQUE_ID] = "__legacy__"
-    entity = SnowtireBinarySensor(hass, config)
-    assert entity.unique_id == f"{MOCK_WEATHER_ENTITY}-1"
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_UNAVAILABLE
+    assert not calls
+    # The problem is reported only once.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "does not provide any forecast" in warnings[0].message
 
 
-async def test_async_added_to_hass(default_sensor):
-    """Test async added to hass."""
-    await default_sensor.async_added_to_hass()
-
-
-# pylint: disable=protected-access
-@pytest.mark.parametrize(
-    ("temp1", "temp2"),
-    [(0, -17.78), (10, -12.22), (20, -6.67), (30, -1.11), (40, 4.44), (50, 10)],
-)
-async def test__temp2c(temp1, temp2):
-    """Test temperature conversions."""
-    assert SnowtireBinarySensor._temp2c(temp1, UnitOfTemperature.CELSIUS) == temp1
-    assert (
-        round(SnowtireBinarySensor._temp2c(temp1, UnitOfTemperature.FAHRENHEIT), 2)
-        == temp2
-    )
-    assert SnowtireBinarySensor._temp2c(None, UnitOfTemperature.CELSIUS) is None
-
-
-async def test_async_update_forecast_fail(hass: HomeAssistant, default_sensor):
-    """Test sensor update on forecast fail."""
+async def test_forecast_service_error(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a failing forecast service makes the sensor unavailable."""
+    await setup_entry(hass, mock_config_entry)
     async_mock_service(
         hass,
         WEATHER_DOMAIN,
         SERVICE_GET_FORECASTS,
-        supports_response=SupportsResponse.OPTIONAL,
+        raise_exception=HomeAssistantError("boom"),
     )
 
-    with pytest.raises(HomeAssistantError, match="Unable to find an entity"):
-        await default_sensor.async_update()
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        set_weather_state(hass)
+        await hass.async_block_till_done()
+        set_weather_state(hass, temperature=11)
+        await hass.async_block_till_done()
 
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: -1,
-        },
-    )
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_UNAVAILABLE
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Unable to get forecast" in warnings[0].message
 
-    with pytest.raises(HomeAssistantError, match="doesn't support any forecast"):
-        await default_sensor.async_update()
-
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: -1,
-            ATTR_SUPPORTED_FEATURES: "unexpected",
-        },
-    )
-
-    with pytest.raises(TypeError):
-        await default_sensor.async_update()
+    # Recovers once the service works again.
+    mock_forecast_service(hass, [forecast_entry(0, 12)])
+    set_weather_state(hass, temperature=12)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
 
 
-async def test_async_update(hass: HomeAssistant, default_sensor):
-    """Test sensor update."""
-    hass.states.async_set(MOCK_WEATHER_ENTITY, None)
+async def test_weather_unavailable(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test an unavailable weather entity makes the sensor unavailable."""
+    await setup_entry(hass, mock_config_entry)
+    mock_forecast_service(hass, [forecast_entry(0, 12)])
 
-    with pytest.raises(HomeAssistantError):
-        await default_sensor.async_update()
+    set_weather_state(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
 
-    hass.states.async_set(MOCK_WEATHER_ENTITY, "State")
+    set_weather_state(hass, state=STATE_UNAVAILABLE)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_UNAVAILABLE
 
-    with pytest.raises(HomeAssistantError):
-        await default_sensor.async_update()
 
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: -1,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_DAILY
-            | WeatherEntityFeature.FORECAST_TWICE_DAILY
-            | WeatherEntityFeature.FORECAST_HOURLY,
-        },
-    )
+async def test_restore_state(
+    hass: HomeAssistant,
+    mock_config_entry: MockConfigEntry,
+    mock_notification: MagicMock,
+) -> None:
+    """Test the last decision is restored after a restart."""
+    mock_restore_cache(hass, [State(SENSOR_ENTITY_ID, STATE_ON)])
+    await setup_entry(hass, mock_config_entry)
 
-    with patch.object(ServiceRegistry, "async_call") as call:
-        await default_sensor.async_update()
-        assert call.call_args.args[2][CONF_TYPE] == "daily"
+    # Unavailable until the weather entity shows up...
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_UNAVAILABLE
 
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: -1,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_TWICE_DAILY
-            | WeatherEntityFeature.FORECAST_HOURLY,
-        },
-    )
+    # ...but the restored decision is used for the hysteresis: an average of
+    # 7.2°C keeps winter tires only when the previous decision was "winter".
+    mock_forecast_service(hass, [forecast_entry(0, 7.2), forecast_entry(1, 7.2, 7.2)])
+    set_weather_state(hass, temperature=7.2)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
+    mock_notification.assert_not_called()
 
-    with patch.object(ServiceRegistry, "async_call") as call:
-        await default_sensor.async_update()
-        assert call.call_args.args[2][CONF_TYPE] == "twice_daily"
+    # A change against the restored decision is notified.
+    mock_forecast_service(hass, [forecast_entry(0, 15), forecast_entry(1, 14, 10)])
+    set_weather_state(hass, temperature=13)
+    await hass.async_block_till_done()
 
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: -1,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_HOURLY,
-        },
-    )
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+    mock_notification.assert_called_once()
+    assert "summer" in mock_notification.call_args.args[1]
 
-    with patch.object(ServiceRegistry, "async_call") as call:
-        await default_sensor.async_update()
-        assert call.call_args.args[2][CONF_TYPE] == "hourly"
 
-    today = dt_util.start_of_local_day()
-    today_ts = int(today.timestamp() * 1000)
-    day = days = 86400000
+async def test_restore_unavailable_state(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test an unavailable last state is not restored."""
+    mock_restore_cache(hass, [State(SENSOR_ENTITY_ID, STATE_UNAVAILABLE)])
+    await setup_entry(hass, mock_config_entry)
 
-    forecast = {
-        MOCK_WEATHER_ENTITY: {
-            "forecast": [
-                {
-                    ATTR_FORECAST_TIME: today_ts - day,
-                },
-                {
-                    ATTR_FORECAST_TIME: today,
-                    ATTR_FORECAST_TEMP: 9,
-                },
-                {
-                    ATTR_FORECAST_TIME: today_ts + day,
-                    ATTR_FORECAST_TEMP_LOW: 1,
-                    ATTR_FORECAST_TEMP: 8,
-                },
-                {
-                    ATTR_FORECAST_TIME: today_ts + (MOCK_DAYS + 1) * days,
-                },
-            ]
-        }
-    }
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_UNAVAILABLE
 
-    async_mock_service(hass, WEATHER_DOMAIN, SERVICE_GET_FORECASTS, response=forecast)
 
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: -1,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_DAILY,
-        },
-    )
+async def test_unload_stops_updates(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry
+) -> None:
+    """Test the weather listener is removed when the entry is unloaded."""
+    await setup_entry(hass, mock_config_entry)
+    calls = mock_forecast_service(hass, [forecast_entry(0, 12)])
+    set_weather_state(hass)
+    await hass.async_block_till_done()
+    assert len(calls) == 1
 
-    await default_sensor.async_update()
-    assert default_sensor.available
-    assert default_sensor.is_on
-    assert default_sensor.icon == ICON_WINTER
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
 
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: 11.9,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_DAILY,
-        },
-    )
-
-    await default_sensor.async_update()
-    assert default_sensor.available
-    assert default_sensor.is_on
-    assert default_sensor.icon == ICON_WINTER
-
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: 12,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_DAILY,
-        },
-    )
-
-    await default_sensor.async_update()
-    assert default_sensor.available
-    assert not default_sensor.is_on
-    assert default_sensor.icon == ICON_SUMMER
-
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: 8,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_DAILY,
-        },
-    )
-
-    await default_sensor.async_update()
-    assert default_sensor.available
-    assert not default_sensor.is_on
-    assert default_sensor.icon == ICON_SUMMER
-
-    hass.states.async_set(
-        MOCK_WEATHER_ENTITY,
-        "State",
-        attributes={
-            ATTR_WEATHER_TEMPERATURE: 7.9,
-            ATTR_SUPPORTED_FEATURES: WeatherEntityFeature.FORECAST_DAILY,
-        },
-    )
-
-    await default_sensor.async_update()
-    assert default_sensor.available
-    assert default_sensor.is_on
-    assert default_sensor.icon == ICON_WINTER
+    set_weather_state(hass, temperature=11)
+    await hass.async_block_till_done()
+    assert len(calls) == 1
