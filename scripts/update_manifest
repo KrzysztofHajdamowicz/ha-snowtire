@@ -35,7 +35,6 @@ manifest_path = package / "manifest.json"
 manifest = json.loads(manifest_path.read_text(encoding="utf8"))
 manifest["domain"] = constant("DOMAIN")
 manifest["name"] = constant("NAME")
-manifest["version"] = constant("VERSION")
 manifest["issue_tracker"] = constant("ISSUE_URL")
 manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf8")
 

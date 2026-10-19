@@ -1,67 +1,139 @@
 ---
 name: "Release"
 
+# Run from Actions → Release → Run workflow on the `dev` branch.
+# The workflow checks that CI passed on the current commit, commits the version to manifest.json, tags the commit,
+# builds snowtire.zip and publishes a GitHub release with generated notes
+# (categories are configured in .github/release.yml).
+#
+# Note: the release commit is pushed to `dev` with GITHUB_TOKEN. If branch
+# protection with required status checks is enabled on `dev`, that push is
+# rejected: add a bypass for GitHub Actions or push with a GitHub App token.
+
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag: vX.Y.Z, or vX.Y.Z-preN / -alphaN / -betaN / -rcN for a pre-release"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run: build and preview the release notes without pushing or publishing"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
   release:
-    name: "Publish new release"
+    name: "Publish release"
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MANIFEST: custom_components/snowtire/manifest.json
     steps:
+      - name: "Validate input"
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(pre|alpha|beta|rc)[0-9]*)?$ ]]; then
+            echo "::error::Version '$VERSION' does not match vX.Y.Z or vX.Y.Z-(pre|alpha|beta|rc)N"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" != "refs/heads/dev" ]]; then
+            echo "::error::Releases are made from the dev branch, not $GITHUB_REF"
+            exit 1
+          fi
+
       - name: "Checkout the repository"
-        uses: actions/checkout@v7
-
-      - working-directory: ./custom_components
-        run: |
-          echo "package=$(ls -F | grep \/$ | sed -n "s/\///g;1p")" >> $GITHUB_ENV
-          echo "release_version=$(git describe --tags)" >> $GITHUB_ENV
-      - working-directory: ./custom_components
-        run: |
-          echo "basedir=$(pwd)/${{ env.package }}" >> $GITHUB_ENV
-
-      - name: "Zip component dir"
-        if: env.release_version != '' && success()
-        working-directory: ./custom_components/${{ env.package }}
-        run: |
-          zip ${{ env.package }}.zip -r ./
-
-      - name: "Release"
-        if: env.release_version != '' && success()
-        uses: softprops/action-gh-release@v3
-        with:
-          files: ${{ env.basedir }}/${{ env.package }}.zip
-          # Tags such as v2.0.0-pre1, v2.0.0-beta.1, v2.1.0-alpha or v2.1.0-rc1
-          # are published as pre-releases (hidden in HACS unless "show beta" is on).
-          prerelease: >-
-            ${{ contains(github.ref_name, '-pre') || contains(github.ref_name, '-beta')
-            || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc') }}
-
-  release-notes:
-    name: "Compose release notes"
-    needs: release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: "Check out repository"
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - run: |
-          echo "release_version=$(git describe --tags)" >> $GITHUB_ENV
+      - name: "Check that CI passed on this commit"
+        run: |
+          conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --commit "$GITHUB_SHA" --event push --limit 1 --json status,conclusion \
+            --jq '.[0] | if . == null then "missing" elif .status != "completed" then .status else .conclusion end')
+          if [[ "$conclusion" != "success" ]]; then
+            echo "::error::CI on $GITHUB_SHA is '$conclusion', wait for a green CI run before releasing"
+            exit 1
+          fi
 
-      - name: "Set up uv"
-        if: env.release_version != '' && success()
-        uses: astral-sh/setup-uv@v10.3.0
-        with:
-          enable-cache: true
+      - name: "Check that the tag does not exist"
+        run: |
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::Tag $VERSION already exists"
+            exit 1
+          fi
 
-      - name: "Update release notes"
-        if: env.release_version != '' && success()
-        run: uv run --only-group release python ./scripts/gen_releasenotes --token ${{ secrets.GITHUB_TOKEN }} --repo ${{ github.repository }} --release ${{ env.release_version }}
+      - name: "Find the previous release tag"
+        id: previous
+        run: |
+          # A pre-release is compared with the previous tag of any kind,
+          # a stable release with the previous stable release.
+          tags=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname --merged HEAD)
+          if [[ "$VERSION" != *-* ]]; then
+            tags=$(grep -v '[-]' <<<"$tags" || true)
+          fi
+          previous=$(head -n 1 <<<"$tags")
+          echo "Previous tag: ${previous:-<none>}"
+          echo "tag=$previous" >> "$GITHUB_OUTPUT"
+
+      - name: "Set the version in manifest.json"
+        run: |
+          jq --arg version "$VERSION" '.version = $version' "$MANIFEST" > manifest.tmp
+          mv manifest.tmp "$MANIFEST"
+          git diff
+
+      - name: "Commit and tag"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -am "Release $VERSION"
+          git tag -a "$VERSION" -m "$VERSION"
+
+      - name: "Zip component dir"
+        working-directory: ./custom_components/snowtire
+        run: zip -r "$GITHUB_WORKSPACE/snowtire.zip" ./
+
+      - name: "Push the release commit and tag"
+        if: ${{ !inputs.dry_run }}
+        run: git push --atomic origin HEAD:dev "refs/tags/$VERSION"
+
+      - name: "Publish the release"
+        if: ${{ !inputs.dry_run }}
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.tag }}
+        run: |
+          args=(--verify-tag --title "$VERSION" --generate-notes)
+          if [[ -n "$PREVIOUS" ]]; then
+            args+=(--notes-start-tag "$PREVIOUS")
+          fi
+          if [[ "$VERSION" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$VERSION" snowtire.zip "${args[@]}"
+
+      - name: "Preview the release notes"
+        if: ${{ inputs.dry_run }}
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.tag }}
+        run: |
+          args=(-f "tag_name=$VERSION" -f "target_commitish=$(git rev-parse HEAD~1)")
+          if [[ -n "$PREVIOUS" ]]; then
+            args+=(-f "previous_tag_name=$PREVIOUS")
+          fi
+          {
+            echo "## Dry run: $VERSION (previous: ${PREVIOUS:-none})"
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" --jq .body
+          } >> "$GITHUB_STEP_SUMMARY"
