@@ -47,7 +47,7 @@ jobs:
 
       - name: "Run tests"
         run: |
-          uv run pytest --basetemp="$RUNNER_TEMP" --durations=10 -n auto --dist=loadfile -p no:cacheprovider
+          uv run pytest --durations=10 -p no:cacheprovider
           ./scripts/check_dirty
 
   hassfest:

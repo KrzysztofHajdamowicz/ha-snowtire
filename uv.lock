@@ -1136,7 +1136,6 @@ dev = [
     { name = "prek" },
     { name = "pytest-cov" },
     { name = "pytest-homeassistant-custom-component" },
-    { name = "pytest-xdist" },
     { name = "ruff" },
 ]
 release = [
@@ -1152,7 +1151,6 @@ dev = [
     { name = "prek", specifier = ">=0.5" },
     { name = "pytest-cov", specifier = ">=7.0" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.373" },
-    { name = "pytest-xdist", specifier = ">=3.8" },
     { name = "ruff", specifier = ">=0.17" },
 ]
 release = [

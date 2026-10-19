@@ -12,7 +12,6 @@ dev = [
     "homeassistant==2026.10.2",
     "pytest-homeassistant-custom-component==0.13.373",
     "pytest-cov>=7.0",
-    "pytest-xdist>=3.8",
     "ruff>=0.17",
     "prek>=0.5",
 ]
