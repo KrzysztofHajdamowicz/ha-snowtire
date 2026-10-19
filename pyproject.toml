@@ -82,6 +82,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 norecursedirs = [".git", "testing_config"]
 asyncio_mode = "auto"
+markers = ["regression: scenarios identified during the pre-release code review"]
 addopts = "--strict-markers --cov=custom_components --cov-report=term-missing"
 log_format = "%(asctime)s.%(msecs)03d %(levelname)-8s %(threadName)s %(name)s:%(filename)s:%(lineno)s %(message)s"
 log_date_format = "%Y-%m-%d %H:%M:%S"
