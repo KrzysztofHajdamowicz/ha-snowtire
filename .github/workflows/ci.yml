@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: "Set up uv"
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
 
@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: "Set up uv"
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
 
@@ -71,6 +71,9 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # brands: no brand images in home-assistant/brands for this fork.
+          # license: CC BY-NC-SA 4.0 is not detected by GitHub (SPDX NOASSERTION).
+          ignore: "brands license"
 
   automerge:
     name: "Auto-merge Dependabot"
