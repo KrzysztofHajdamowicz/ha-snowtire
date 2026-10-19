@@ -123,7 +123,7 @@ set_version "${const_path}" "${new}"
 if output=$(git status --porcelain) && [[ -n "$output" ]]; then
     git commit -a --no-verify -m "Bump version to ${new}"
 fi
-git tag -a "$new" -m "v$new"
+git tag -a "v$new" -m "v$new"
 log.info "Commit tagged as v$new"
 
 if echo "${new}" | grep -q "-"; then

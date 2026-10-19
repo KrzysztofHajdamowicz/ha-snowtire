@@ -4,7 +4,7 @@ name: "Release"
 on:
   push:
     tags:
-      - "[v0-9]+.[0-9]+*"
+      - "v[0-9]+.[0-9]+.[0-9]+*"
 
 jobs:
   release:
@@ -19,7 +19,7 @@ jobs:
       - working-directory: ./custom_components
         run: |
           echo "package=$(ls -F | grep \/$ | sed -n "s/\///g;1p")" >> $GITHUB_ENV
-          echo "release_version=$(git describe --tags | sed s/v//)" >> $GITHUB_ENV
+          echo "release_version=$(git describe --tags)" >> $GITHUB_ENV
       - working-directory: ./custom_components
         run: |
           echo "basedir=$(pwd)/${{ env.package }}" >> $GITHUB_ENV
@@ -35,6 +35,11 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ env.basedir }}/${{ env.package }}.zip
+          # Tags such as v2.0.0-pre1, v2.0.0-beta.1, v2.1.0-alpha or v2.1.0-rc1
+          # are published as pre-releases (hidden in HACS unless "show beta" is on).
+          prerelease: >-
+            ${{ contains(github.ref_name, '-pre') || contains(github.ref_name, '-beta')
+            || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-rc') }}
 
   release-notes:
     name: "Compose release notes"
@@ -49,7 +54,7 @@ jobs:
           fetch-depth: 0
 
       - run: |
-          echo "release_version=$(git describe --tags | sed s/v//)" >> $GITHUB_ENV
+          echo "release_version=$(git describe --tags)" >> $GITHUB_ENV
 
       - name: "Set up uv"
         if: env.release_version != '' && success()
