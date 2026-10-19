@@ -15,10 +15,6 @@ dev = [
     "ruff>=0.17",
     "prek>=0.5",
 ]
-release = [
-    "PyGithub>=2.8",
-    "packaging>=25.0",
-]
 
 [tool.uv]
 package = false
@@ -74,8 +70,6 @@ combine-as-imports = true
 "scripts/*" = [
     "T201",    # print found
 ]
-# Legacy release-notes helper, kept as is.
-"scripts/gen_releasenotes" = ["ANN", "DTZ", "ERA001", "PLR2004", "PTH", "S607", "SLF001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -23,30 +23,17 @@
 
 ## Type of change
 <!--
-  What type of change does your PR introduce to Home Assistant?
-  NOTE: Please, check only 1! box!
-  If your PR requires multiple boxes to be checked, you'll most likely need to
-  split it into multiple PRs. This makes things easier and faster to code review.
+  The release notes are grouped by the label of the pull request, so add one:
+  `breaking`, `enhancement`, `bug`, `documentation`, `tests` or `dependencies`
+  (`skip-changelog` leaves the pull request out of the release notes).
 -->
 
-- [ ] Dependency upgrade
-- [ ] Bugfix (non-breaking change which fixes an issue)
-- [ ] New feature (which adds functionality to an this integration)
-- [ ] Breaking change (fix/feature causing existing functionality to break)
-- [ ] Code quality improvements to existing code or addition of tests
-
-## Example entry for `configuration.yaml`:
+## How to test
 <!--
-  Supplying a configuration snippet, makes it easier for a maintainer to test
-  your PR. Furthermore, for new integrations, it gives an impression of how
-  the configuration would look like.
-  Note: Remove this section if this PR does not have an example entry.
+  Describe how a maintainer can verify the change, e.g. the integration
+  options, the weather entity and the forecast that trigger it.
 -->
 
-```yaml
-# Example configuration.yaml
-
-```
 
 ## Additional information
 <!--
@@ -67,10 +54,10 @@
 
 - [ ] The code change is tested and works locally.
 - [ ] There is no commented out code in this PR.
-- [ ] The code has been formatted using Ruff (`python3 -m ruff format custom_components`)
-- [ ] The code quality has been checked using Ruff (`python3 -m ruff check custom_components --fix`)
+- [ ] Tests are added or updated and `uv run pytest` passes.
+- [ ] `./scripts/lint` reports no issues.
 
-If user exposed functionality or configuration variables are added/changed:
+If user exposed functionality or configuration options are added/changed:
 
 - [ ] Documentation added/updated to README.md
 

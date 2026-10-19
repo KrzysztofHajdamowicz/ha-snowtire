@@ -1138,10 +1138,6 @@ dev = [
     { name = "pytest-homeassistant-custom-component" },
     { name = "ruff" },
 ]
-release = [
-    { name = "packaging" },
-    { name = "pygithub" },
-]
 
 [package.metadata]
 
@@ -1152,10 +1148,6 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.0" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.373" },
     { name = "ruff", specifier = ">=0.17" },
-]
-release = [
-    { name = "packaging", specifier = ">=25.0" },
-    { name = "pygithub", specifier = ">=2.8" },
 ]
 
 [[package]]
