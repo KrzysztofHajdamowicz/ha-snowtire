@@ -21,6 +21,7 @@ from homeassistant.components.weather import DOMAIN as WEATHER_DOMAIN
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_NAME, CONF_UNIQUE_ID
 from homeassistant.core import DOMAIN as HOMEASSISTANT_DOMAIN
+from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers import config_validation as cv, issue_registry as ir
 import voluptuous as vol
 
@@ -37,6 +38,7 @@ from .const import (
     NAME,
     PLATFORMS,
 )
+from .migration import async_migrate_yaml_entity, async_prepare_yaml_imports
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -54,8 +56,8 @@ YAML_ENTRY_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_CREATE_NOTIFICATIONS, default=DEFAULT_CREATE_NOTIFICATIONS
         ): cv.boolean,
-        # Accepted for backwards compatibility with old configurations, ignored.
-        vol.Remove(CONF_UNIQUE_ID): cv.string,
+        # Used only to locate existing registry records during legacy migration.
+        vol.Optional(CONF_UNIQUE_ID): cv.string,
     }
 )
 
@@ -69,7 +71,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     if (yaml_entries := config.get(DOMAIN)) is None:
         return True
 
-    for yaml_entry in yaml_entries:
+    for yaml_entry in async_prepare_yaml_imports(hass, yaml_entries):
         hass.async_create_task(
             hass.config_entries.flow.async_init(
                 DOMAIN, context={"source": SOURCE_IMPORT}, data=yaml_entry
@@ -97,7 +99,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: SnowtireConfigEntry) -> bool:
     """Set up Snowtire from a config entry."""
+    if CONF_WEATHER not in entry.options:
+        message = (
+            "Restore the legacy snowtire: YAML configuration and restart Home "
+            "Assistant to migrate this entry before removing the YAML section."
+        )
+        raise ConfigEntryError(message)
+    async_migrate_yaml_entity(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: SnowtireConfigEntry) -> bool:
+    """Upgrade config entries; legacy YAML is converted during integration setup."""
+    if entry.version == 1:
+        hass.config_entries.async_update_entry(entry, version=2)
     return True
 
 

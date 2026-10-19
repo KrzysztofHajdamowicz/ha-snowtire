@@ -22,7 +22,7 @@ This is a maintained fork of the original [Limych/ha-snowtire](https://github.co
   * Home Assistant 2026.1 or newer is required.
   * The `binary_sensor: - platform: snowtire` configuration (deprecated since 1.6.0) has been removed.
   * The `snowtire:` section in `configuration.yaml` is deprecated. It is still imported into the UI once and a repair issue reminds you to remove it. Configure the integration via the UI instead.
-  * The `unique_id` option is ignored. Every sensor is identified by its config entry.
+  * The `unique_id` option is used only to migrate existing YAML sensors. Entity IDs and customizations are preserved; new sensors are identified by their config entries.
   * The sensor remembers its last decision across restarts, so a tire change notification is also created when the decision changes right after a restart.
 
 ## Installation
@@ -73,6 +73,16 @@ The sensor looks at the current temperature and at the forecast temperatures (da
 * if any temperature is at or below 0.5 °C, winter tires are needed;
 * otherwise, winter tires are needed when the average temperature is below 7 °C (with a hysteresis of ±0.5 °C to avoid flapping).
 
+Today's daily minimum is included because a daily forecast does not identify the
+hour of its minimum. Hourly temperatures from hours that have already passed are
+excluded. Dates are evaluated in your Home Assistant time zone.
+
+The sensor updates when the weather entity changes and refreshes the forecast
+every 30 minutes, even if current weather observations stay the same. When no
+usable forecast temperatures are available, the sensor becomes unavailable and
+does not send a tire-change notification. Its previous decision is retained for
+comparison when the forecast returns.
+
 ### Legacy YAML configuration
 
 A `snowtire:` section in `configuration.yaml` is still imported into a config entry on startup, and a repair issue asks you to remove it:
@@ -105,6 +115,9 @@ logger:
 ## Development
 
 The project uses [uv](https://docs.astral.sh/uv/) for dependency management. Home Assistant itself is installed as a development dependency.
+
+The main development environment uses Python 3.14 and current Home Assistant.
+CI also runs the full test suite on Home Assistant 2026.1.0 with Python 3.13.
 
 ```bash
 ./scripts/setup          # uv sync + install git hooks (prek)

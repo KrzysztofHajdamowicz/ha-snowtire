@@ -32,6 +32,7 @@ import voluptuous as vol
 from .const import (
     CONF_CREATE_NOTIFICATIONS,
     CONF_DAYS,
+    CONF_LEGACY_ENTITY_ID,
     CONF_WEATHER,
     DEFAULT_CREATE_NOTIFICATIONS,
     DEFAULT_DAYS,
@@ -72,7 +73,7 @@ OPTION_KEYS: Final = (CONF_WEATHER, CONF_DAYS, CONF_CREATE_NOTIFICATIONS)
 class SnowtireConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Snowtire."""
 
-    VERSION = 1
+    VERSION = 2
 
     @staticmethod
     @callback
@@ -110,9 +111,10 @@ class SnowtireConfigFlow(ConfigFlow, domain=DOMAIN):
         self._async_abort_entries_match(
             {CONF_NAME: name, CONF_WEATHER: options[CONF_WEATHER]}
         )
-        return self.async_create_entry(
-            title=name, data={CONF_NAME: name}, options=options
-        )
+        data = {CONF_NAME: name}
+        if CONF_LEGACY_ENTITY_ID in values:
+            data[CONF_LEGACY_ENTITY_ID] = values[CONF_LEGACY_ENTITY_ID]
+        return self.async_create_entry(title=name, data=data, options=options)
 
 
 class SnowtireOptionsFlow(OptionsFlowWithReload):

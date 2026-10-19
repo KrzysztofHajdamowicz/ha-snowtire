@@ -165,16 +165,16 @@ async def test_days_window(
     assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
 
 
-async def test_todays_low_is_ignored(
+async def test_todays_daily_low_is_included(
     hass: HomeAssistant, mock_config_entry: MockConfigEntry
 ) -> None:
-    """Test the low temperature of today is ignored, but tomorrow's counts."""
+    """Include today's daily minimum because its hour is unknown."""
     await setup_entry(hass, mock_config_entry)
 
     mock_forecast_service(hass, [forecast_entry(0, 12, -5)])
     set_weather_state(hass, temperature=10)
     await hass.async_block_till_done()
-    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_ON
 
     mock_forecast_service(hass, [forecast_entry(1, 12, -5)])
     set_weather_state(hass, temperature=11)
@@ -242,7 +242,7 @@ async def test_forecast_type(
 ) -> None:
     """Test the preferred forecast type is requested."""
     await setup_entry(hass, mock_config_entry)
-    calls = mock_forecast_service(hass, [forecast_entry(0, 12)])
+    calls = mock_forecast_service(hass, [forecast_entry(1, 12)])
 
     set_weather_state(hass, features=features)
     await hass.async_block_till_done()

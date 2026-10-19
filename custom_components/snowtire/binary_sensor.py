@@ -36,7 +36,10 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import translation
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
@@ -63,6 +66,7 @@ if TYPE_CHECKING:
     from . import SnowtireConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+FORECAST_REFRESH_INTERVAL: Final = timedelta(minutes=30)
 
 # Forecast types in order of preference.
 FORECAST_TYPES: Final = (
@@ -107,8 +111,8 @@ def calculate_winter(
     return sum(temps) / len(temps) < threshold
 
 
-def forecast_date(value: Any) -> date | None:
-    """Return the local date of a forecast entry timestamp."""
+def forecast_datetime(value: Any) -> datetime | None:
+    """Return the local timestamp of a forecast entry."""
     if isinstance(value, datetime):
         timestamp = value
     elif isinstance(value, int | float):
@@ -118,7 +122,13 @@ def forecast_date(value: Any) -> date | None:
             return None
     else:
         return None
-    return dt_util.as_local(timestamp).date()
+    return dt_util.as_local(timestamp)
+
+
+def forecast_date(value: Any) -> date | None:
+    """Return the local date of a forecast entry timestamp."""
+    timestamp = forecast_datetime(value)
+    return timestamp.date() if timestamp is not None else None
 
 
 class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
@@ -161,6 +171,11 @@ class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
             )
         )
         self.async_on_remove(async_at_started(self.hass, self._async_started))
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass, self._async_refresh_forecast, FORECAST_REFRESH_INTERVAL
+            )
+        )
 
     @callback
     def _async_started(self, _hass: HomeAssistant) -> None:
@@ -170,6 +185,11 @@ class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
     @callback
     def _async_weather_changed(self, _event: Event[EventStateChangedData]) -> None:
         """Schedule an update when the weather entity changes."""
+        self.async_schedule_update_ha_state(force_refresh=True)
+
+    @callback
+    def _async_refresh_forecast(self, _now: datetime) -> None:
+        """Refresh forecasts even when current weather observations do not change."""
         self.async_schedule_update_ha_state(force_refresh=True)
 
     async def async_update(self) -> None:
@@ -191,7 +211,7 @@ class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
     async def _async_get_temperatures(self) -> list[float]:
         """Return current and forecast temperatures (Celsius) for the analyzed days."""
         weather = self.hass.states.get(self._weather_entity_id)
-        if weather is None or weather.state == STATE_UNAVAILABLE:
+        if weather is None or weather.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             _LOGGER.debug("Weather entity %s is not available", self._weather_entity_id)
             return []
 
@@ -216,29 +236,46 @@ class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
                 "Unable to get forecast from %s: %s", self._weather_entity_id, err
             )
             return []
-        self._problem_reported = False
-
-        forecast = (response or {}).get(self._weather_entity_id, {}).get("forecast", [])
+        forecast = (response or {}).get(self._weather_entity_id, {}).get(
+            "forecast"
+        ) or []
         unit = (
             weather.attributes.get(ATTR_WEATHER_TEMPERATURE_UNIT)
             or self.hass.config.units.temperature_unit
         )
-        today = dt_util.now().date()
+        now = dt_util.now()
+        today = now.date()
         stop = today + timedelta(days=self._days + 1)
 
         temperatures: list[float] = []
-        if (current := weather.attributes.get(ATTR_WEATHER_TEMPERATURE)) is not None:
-            temperatures.append(_to_celsius(current, unit))
         for item in forecast:
-            day = forecast_date(item.get(ATTR_FORECAST_TIME))
-            if day is None or day < today or day >= stop:
+            timestamp = forecast_datetime(item.get(ATTR_FORECAST_TIME))
+            if timestamp is None:
+                continue
+            day = timestamp.date()
+            if day < today or day >= stop:
+                continue
+            if forecast_type == "hourly" and dt_util.as_utc(timestamp) < dt_util.as_utc(
+                now
+            ):
                 continue
             low = item.get(ATTR_FORECAST_TEMP_LOW)
-            if low is not None and day != today:
+            if low is not None:
                 temperatures.append(_to_celsius(low, unit))
             high = item.get(ATTR_FORECAST_TEMP)
             if high is not None:
                 temperatures.append(_to_celsius(high, unit))
+
+        if not temperatures:
+            self._report_problem(
+                "Weather entity %s has no usable forecast temperatures",
+                self._weather_entity_id,
+            )
+            return []
+
+        self._problem_reported = False
+        if (current := weather.attributes.get(ATTR_WEATHER_TEMPERATURE)) is not None:
+            temperatures.append(_to_celsius(current, unit))
 
         _LOGGER.debug(
             "Temperatures for %s from %s to %s: %s",
@@ -254,7 +291,7 @@ class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
         """Return the best forecast type supported by the weather entity."""
         try:
             features = int(attributes.get(ATTR_SUPPORTED_FEATURES) or 0)
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             return None
         return next(
             (name for feature, name in FORECAST_TYPES if features & feature), None
@@ -281,7 +318,7 @@ class SnowtireBinarySensor(BinarySensorEntity, RestoreEntity):
             )
             try:
                 return text.format(**placeholders)
-            except KeyError, IndexError:
+            except (KeyError, IndexError):
                 return text
 
         _LOGGER.debug("Creating notification to change tires (winter=%s)", winter)

@@ -15,6 +15,7 @@ PLATFORMS: Final = [Platform.BINARY_SENSOR]
 CONF_WEATHER: Final = "weather"
 CONF_DAYS: Final = "days"
 CONF_CREATE_NOTIFICATIONS: Final = "create_notifications"
+CONF_LEGACY_ENTITY_ID: Final = "legacy_entity_id"
 
 DEFAULT_DAYS: Final = 7
 MIN_DAYS: Final = 1

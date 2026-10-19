@@ -284,6 +284,35 @@ async def test_forecast_refresh_without_weather_state_change(
     assert "winter" in mock_notification.call_args.args[1]
 
 
+async def test_unload_stops_periodic_refresh(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, freezer
+) -> None:
+    """Remove periodic refreshes along with the sensor's weather listener."""
+    freezer.move_to("2026-10-19T12:00:00+00:00")
+    await setup_entry(hass, mock_config_entry)
+    calls = mock_forecast_service(
+        hass,
+        [
+            {
+                ATTR_FORECAST_TIME: (dt_util.now() + timedelta(days=1)).isoformat(),
+                ATTR_FORECAST_TEMP: 14,
+            }
+        ],
+    )
+    set_weather_state(hass, temperature=12)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR_ENTITY_ID).state == STATE_OFF
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    call_count = len(calls)
+
+    freezer.tick(timedelta(hours=1))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+
+    assert len(calls) == call_count
+
+
 @pytest.mark.parametrize("custom_unique_id", [None, "my_tires"])
 async def test_legacy_yaml_upgrade_preserves_entity(
     hass: HomeAssistant, custom_unique_id: str | None
